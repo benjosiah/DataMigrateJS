@@ -1,80 +1,74 @@
+
 const { createPool } = require('mysql2/promise');
 
-/**
- * Create a connection pool for a MySQL database.
- * @param {string} connectionString - The MySQL connection string.
- * @returns {Object} - The MySQL connection pool.
- */
-function createMySQLPool(connectionString) {
-  return createPool({ connectionString });
-}
 
-/**
- * Create a MySQL table based on the provided schema.
- * @param {Object} pool - The MySQL connection pool.
- * @param {string} tableName - The name of the table.
- * @param {Object} schema - The table schema with column names and types.
- * @returns {Promise<void>} - A promise that resolves when the table is created.
- */
-async function createMySQLTable(pool, tableName, schema) {
+async function connectToMySQL(config) {
   try {
-    const connection = await pool.getConnection();
-    let createTableQuery = `CREATE TABLE IF NOT EXISTS ${tableName} (`;
-    
-    // Dynamically create columns based on the schema
-    Object.entries(schema).forEach(([columnName, columnType]) => {
-      createTableQuery += `${columnName} ${columnType}, `;
+    const pool = createPool({
+      host: config.host,
+      user: config.user,
+      password: config.password,
+      database: config.database,
     });
-    
-    createTableQuery = createTableQuery.slice(0, -2); // Remove the trailing comma and space
-    createTableQuery += ');';
-    
-    await connection.query(createTableQuery);
-    console.log(`Table '${tableName}' created in MySQL`);
-    connection.release();
+
+    console.log('Connected to MySQL');
+    return pool;
   } catch (error) {
-    console.error(`Error creating table in MySQL: ${error.message}`);
+    console.error('Error connecting to MySQL:', error.message);
     throw error;
   }
 }
 
-/**
- * Insert data into a MySQL table.
- * @param {Object} pool - The MySQL connection pool.
- * @param {string} tableName - The name of the table.
- * @param {Array} data - The data to insert into the table.
- * @returns {Promise<void>} - A promise that resolves when the insertion is complete.
- */
-async function insertIntoMySQL(pool, tableName, data) {
-  try {
-    const connection = await pool.getConnection();
-    await connection.query(`INSERT INTO ${tableName} VALUES ?`, [data]);
-    console.log('Data inserted into MySQL');
-    connection.release();
-  } catch (error) {
-    console.error('Error inserting data into MySQL:', error.message);
-    throw error;
-  }
-}
-
-/**
- * Close the MySQL connection pool.
- * @param {Object} pool - The MySQL connection pool.
- * @returns {Promise<void>} - A promise that resolves when the pool is closed.
- */
-async function closeMySQLPool(pool) {
+async function disconnectFromMySQL(pool) {
   try {
     await pool.end();
-    console.log('Closed MySQL connection pool');
+    console.log('Disconnected from MySQL');
   } catch (error) {
-    console.error('Error closing MySQL connection pool:', error.message);
+    console.error('Error disconnecting from MySQL:', error.message);
+    throw error;
+  }
+}
+
+async function uploadDataToMySQL(pool, data, tableName) {
+  try {
+    if (data.length === 0) {
+      console.error('Error: No data to upload.');
+      return;
+    }
+
+    const columns = Object.keys(data[0]);
+
+    // Create the table if it doesn't exist
+    await createTableIfNotExists(pool, tableName, columns);
+
+    // Insert data into MySQL
+    const placeholders = Array.from({ length: columns.length }, () => '?').join(',');
+    const values = data.map((row) => columns.map((column) => row[column]));
+    await pool.execute(`INSERT INTO ${tableName} (${columns.join(',')}) VALUES ${values.map(() => `(${placeholders})`).join(',')}`, values.flat());
+    
+    console.log(`Data uploaded to MySQL table '${tableName}'`);
+  } catch (error) {
+    console.error('Error uploading data to MySQL:', error.message);
+    throw error;
+  }
+}
+
+async function createTableIfNotExists(pool, tableName, columns) {
+  try {
+    // Check if the table exists; if not, create it
+    const [rows, fields] = await pool.execute(`SHOW TABLES LIKE '${tableName}'`);
+    if (rows.length === 0) {
+      const columnDefinitions = columns.map((column) => `${column} VARCHAR(255)`).join(',');
+      await pool.execute(`CREATE TABLE ${tableName} (${columnDefinitions})`);
+    }
+  } catch (error) {
+    console.error('Error creating table in MySQL:', error.message);
     throw error;
   }
 }
 
 module.exports = {
-  createMySQLPool,
-  createMySQLTable,
-  insertIntoMySQL,
-  closeMySQLPool,
+  connectToMySQL,
+  disconnectFromMySQL,
+  uploadDataToMySQL,
 };
